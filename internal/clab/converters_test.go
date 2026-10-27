@@ -2,10 +2,12 @@ package clab
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
 	clabcore "github.com/srl-labs/containerlab/core"
+	clabexec "github.com/srl-labs/containerlab/exec"
 )
 
 func TestApplyResultToResponseCopiesFields(t *testing.T) {
@@ -103,5 +105,36 @@ func TestApplyResultToResponseJSONUsesEmptyArrays(t *testing.T) {
 		if !strings.Contains(body, field) {
 			t.Fatalf("expected marshaled response to contain %s, got %s", field, body)
 		}
+	}
+}
+
+func TestExecCollectionToExecResponseKeepsResults(t *testing.T) {
+	ec := clabexec.NewExecCollection()
+	add := func(cmd []string, rc int, stdout, stderr string) {
+		r := clabexec.NewExecResult(clabexec.NewExecCmdFromSlice(cmd))
+		r.SetReturnCode(rc)
+		r.SetStdOut([]byte(stdout))
+		r.SetStdErr([]byte(stderr))
+		ec.Add("clab-demo-r1", r)
+	}
+	add([]string{"sh", "-c", "exit 3"}, 3, "plain text\n", "boom\n")
+	add([]string{"vtysh", "-c", "show bgp summary json"}, 0, "{\n  \"ipv4Unicast\": {\"peerCount\": 2}\n}\n", "")
+	add([]string{"echo", "5"}, 0, "5\n", "")
+
+	got := ExecCollectionToExecResponse(ec)["clab-demo-r1"]
+	if len(got) != 3 {
+		t.Fatalf("got %d results, want 3: %+v", len(got), got)
+	}
+	if got[0].ReturnCode != 3 || got[0].Stdout != "plain text\n" || got[0].Stderr != "boom\n" {
+		t.Errorf("failing command = %+v", got[0])
+	}
+	if !slices.Equal(got[0].Cmd, []string{"sh", "-c", "exit 3"}) {
+		t.Errorf("cmd = %q", got[0].Cmd)
+	}
+	if got[1].Stdout != `{"ipv4Unicast":{"peerCount":2}}` {
+		t.Errorf("JSON output = %q", got[1].Stdout)
+	}
+	if got[2].Stdout != "5" {
+		t.Errorf("number output = %q", got[2].Stdout)
 	}
 }

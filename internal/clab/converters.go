@@ -2,6 +2,7 @@
 package clab
 
 import (
+	"bytes"
 	"encoding/json"
 	"slices"
 
@@ -191,13 +192,14 @@ func ExecCollectionToExecResponse(ec *clabexec.ExecCollection) models.ExecRespon
 		return result
 	}
 
-	// Define intermediate type matching ExecResult structure from containerlab
-	// Note: containerlab uses capital case in JSON output
+	// Intermediate type matching the JSON tags of containerlab's ExecResult.
+	// Stdout is raw because containerlab embeds output that is itself valid
+	// JSON (such as `show ... | json` or a bare number) unquoted.
 	type execResult struct {
-		Cmd        []string `json:"Cmd"`
-		ReturnCode int      `json:"ReturnCode"`
-		Stdout     string   `json:"Stdout"`
-		Stderr     string   `json:"Stderr"`
+		Cmd        []string        `json:"cmd"`
+		ReturnCode int             `json:"return-code"`
+		Stdout     json.RawMessage `json:"stdout"`
+		Stderr     string          `json:"stderr"`
 	}
 
 	// Unmarshal JSON to map
@@ -213,7 +215,7 @@ func ExecCollectionToExecResponse(ec *clabexec.ExecCollection) models.ExecRespon
 			nodeResults = append(nodeResults, models.ClabExecInternalResult{
 				Cmd:        er.Cmd,
 				ReturnCode: er.ReturnCode,
-				Stdout:     er.Stdout,
+				Stdout:     execStdout(er.Stdout),
 				Stderr:     er.Stderr,
 			})
 		}
@@ -221,6 +223,21 @@ func ExecCollectionToExecResponse(ec *clabexec.ExecCollection) models.ExecRespon
 	}
 
 	return result
+}
+
+// execStdout recovers command output from containerlab's exec dump: a JSON
+// string is plain output, and anything else is output that was valid JSON,
+// returned compacted because Dump re-indents it.
+func execStdout(raw json.RawMessage) string {
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var b bytes.Buffer
+	if err := json.Compact(&b, raw); err != nil {
+		return string(raw)
+	}
+	return b.String()
 }
 
 // GetContainerName safely extracts the container name from a GenericContainer.
